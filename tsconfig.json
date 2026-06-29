@@ -1,5 +1,6 @@
 {
 	"compilerOptions": {
+		"baseUrl": "./",
 		"inlineSourceMap": true,
 		"inlineSources": true,
 		"module": "ESNext",
@@ -10,10 +11,15 @@
 		"noUncheckedIndexedAccess": true,
 		"moduleResolution": "node",
 		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
 		"skipLibCheck": true,
 		"forceConsistentCasingInFileNames": true,
 		"allowSyntheticDefaultImports": true,
-		"lib": ["ES2021", "DOM"]
+		"allowImportingTsExtensions": true,
+		"lib": ["ES2021", "DOM"],
+		"paths": {
+			"@lib*": ["src/lib/*"]
+		}
 	},
-	"include": ["src/**/*.ts"]
+	"include": ["src/**/*.ts", "src/**/*.svelte"],
 }

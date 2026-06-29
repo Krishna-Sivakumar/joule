@@ -1,8 +1,22 @@
-/*
+.joule-unit-settings-container {
+	display: flex;
+	align-items: center;
+	row-gap: var(--size-4-3);
+	border-radius: var(--setting-items-radius);
+	background-color: var(--setting-items-background);
+	padding: var(--size-4-4);
+	margin-bottom: var(--size-4-2);
+	border: var(--setting-items-border-width) solid
+		var(--setting-items-border-color);
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.joule-unit-settings-vertical {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	align-items: stretch;
+}
 
-If your plugin does not need CSS, delete this file.
-
-*/
+.joule-settings-contracted {
+	width: 60%;
+}
