@@ -12,14 +12,18 @@ import {
 	type ParserOutput,
 	unableToConsumeToken,
 	expectEOF,
-	opt_sc
+	opt_sc,
+	rep_sc,
+	list,
+	str
 } from "typescript-parsec"
 
 import type {
 	BinaryNode,
 	ValueNode,
 	MealItem,
-	MealRecord
+	MealRecord,
+	Node
 } from "./types";
 
 import { O } from "./"
@@ -56,9 +60,9 @@ const lexer = buildLexer([
 	[true, /^\*/g, TokenKind.Star],
 	[true, /^\//g, TokenKind.Divide],
 
-	[true, /^\d+/g, TokenKind.Whole],
-	[true, /^\d+/g, TokenKind.Integer],
-	[true, /^\d+(\.\d+)?/g, TokenKind.Float],
+	[true, /^(\d)+/g, TokenKind.Whole],
+	[true, /^(\d)+/g, TokenKind.Integer],
+	[true, /^(\d+(\.\d+)?)/g, TokenKind.Float],
 	[true, /^s/g, TokenKind.ServingVar],
 
 
@@ -67,14 +71,11 @@ const lexer = buildLexer([
 	[true, /^\{/g, TokenKind.LSqParen],
 	[true, /^\}/g, TokenKind.RSqParen],
 
-	[true, /^([A-z]+)+/g, TokenKind.String],
+	[true, /^[A-z]+/g, TokenKind.String],
+	[true, /^\:/g, TokenKind.Colon],
 	[true, /^\,/g, TokenKind.Comma],
 	[true, /^\n/g, TokenKind.Newline],
-	[false, /^( |\t)+/g, TokenKind.Space],
-	// TODO remove restricted characters
-	// [true, /^(\w| |\d)+/g, TokenKind.Filename],
-
-	[true, /^\:/, TokenKind.Colon],
+	[true, /^( |\t)+/g, TokenKind.Space],
 ])
 
 type Span = [number, number];
@@ -84,7 +85,9 @@ type ParseNode<T, K> = {
 	kind: K
 }
 
+type ConsumePNode = ParseNode<string, "consumer"> // exists to clean up a line
 type StringPNode = ParseNode<string, "string">
+type WhitespacePNode = ParseNode<string, "whitespace">
 type NumberPNode = ParseNode<number, "number">
 type ServingPNode = ParseNode<"s", "serving">
 type ReferencePNode = ParseNode<{ document: StringPNode, mealName: StringPNode, offset?: NumberPNode }, "reference">
@@ -107,7 +110,9 @@ type MealPNode = ParseNode<{
 	items: ItemPNode[]
 }, "meal">
 
+const Consumer = rule<TokenKind, ConsumePNode>();
 const String = rule<TokenKind, StringPNode>();
+const Whitespace = rule<TokenKind, WhitespacePNode>();
 const Number = rule<TokenKind, NumberPNode>();
 const Reference = rule<TokenKind, ReferencePNode>();
 const Tag = rule<TokenKind, TagPNode>();
@@ -138,6 +143,18 @@ function mergeSpans(spans: Span[]): Span {
 		previous[1] > current[1] ? previous[1] : current[1]
 	])
 }
+
+Whitespace.setPattern(apply(
+	seq(
+		tok(TokenKind.Space),
+		rep(tok(TokenKind.Space))
+	),
+	([head, tail]) => ({
+		value: [head, ...tail.map(token => token.text)].join(''),
+		span: mergeSpans([tokenSpan(head), ...tail.map(token => tokenSpan(token))]),
+		kind: "whitespace"
+	})
+))
 
 String.setPattern(apply(
 	tok(TokenKind.String),
@@ -520,6 +537,21 @@ Meal.setPattern(
 // const md = `Curd Rice\n0.75 cups Rice (s / 0.25 * 160)\n0.75 cups Greek Yogurt (s / 0.75 * 100)`
 // const md = `Tea\n2 g sugar (s * 15)`
 
+export function parseFormulaString(
+	formula: string
+): O.Result<Node> {
+	const result = Add.parse(lexer.parse(formula))
+	if (result.successful && result.candidates[0] && result.candidates[0].result) {
+		return O.ok(ResolveFormulaP(result.candidates[0].result))
+	} else {
+		if (result.successful) {
+			return O.err(new Error("Nothing was parsed."))
+		} else {
+			return O.err(new Error(`${formula}: ` + result.error.message))
+		}
+	}
+}
+
 export function parseJouleBlockToAst(units: string[], content: string): O.Result<MealPNode> {
 	// we can only set this during runtime due to a dependence on `units`
 	Unit.setPattern(apply(
@@ -557,6 +589,9 @@ function ResolveValueP(n: ValuePNode): ValueNode {
 		case "serving":
 			return { value: { kind: "serving" }, kind: "value" }
 		case "reference":
+			// ugly hack; token parsing doesn't pick up spaces.
+			// now, I should really be debugging that problem.
+			// But why do all that when I could just fetch the string from within the span? (kill me)
 			return {
 				value: {
 					document: ResolveStringP(n.value.value.document),

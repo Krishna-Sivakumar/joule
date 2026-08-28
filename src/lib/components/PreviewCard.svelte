@@ -5,7 +5,7 @@
 		evaluateMealRecord,
 		evaluateMealItem,
 		formulaString,
-	} from '../../parser.ts';
+	} from '../../lib/types.ts';
 	let tooltipState = $state({ visibility: 'hidden', item: -1, content: '' });
 
 	const meal: MealRecord = getContext('meal');
@@ -34,14 +34,14 @@
 <div class="joule-card">
 	<div class="joule-card-heading">
 		<span>{meal.name}</span>
-		<span>{evaluateMealRecord(meal)} kcal</span>
+		<span>{Math.round(evaluateMealRecord(meal))} kcal</span>
 	</div>
 
 	{#each meal.items as item, idx}
 		<div class="joule-card-item">
 			<span>{item.name}</span>
 			<span>{item.quantity} {item.unit ? item.unit : 'cnt.'}</span>
-			<span>{evaluateMealItem(item)} kcal</span>
+			<span>{Math.round(evaluateMealItem(item))} kcal</span>
 			<span
 				class={tooltipState.item == idx ? 'tooltip-anchor' : ''}
 				onmouseenter={currentHoveredTooltip(

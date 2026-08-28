@@ -68,6 +68,7 @@ function evaluateFormula(node: Node, sVal: number): number {
 				case "number":
 					return node.value.value
 				case "reference":
+					// TODO fetch data here
 					return 1
 			}
 	}
@@ -115,4 +116,56 @@ export function getDependentsFromFormula(formulaNode: Node): ReferenceField[] {
 				...getDependentsFromFormula(formulaNode.right)
 			]
 	}
+}
+
+export function formulaToString(formulaNode: Node): string {
+	switch (formulaNode.kind) {
+		case "binary":
+			return `${formulaToString(formulaNode.left)} ${formulaNode.op} ${formulaToString(formulaNode.right)}`
+		case "value":
+			switch (formulaNode.value.kind) {
+				case "number":
+					return formulaNode.value.value.toString();
+				case "serving":
+					return "s"
+				case "reference":
+					return `[${formulaNode.value.document}][${formulaNode.value.mealName}]` + (formulaNode.value.offset) ? `[${formulaNode.value.offset}]` : ""
+			}
+	}
+}
+
+export function assembleUniversalKey(mealName: string, document: string, offset: number) {
+	return `${document.split(".")[0]}-${mealName}-${offset}`
+}
+
+export function diffRecords(left: MealRecord[], right: MealRecord[]): [["left" | "right", string, number][], ["left" | "right", string, number][], ["left" | "right", string, number][]] {
+	const leftKeys: ["left" | "right", string, number][] = left.map((meal, offset) => ["left", meal.name, offset])
+	const rightKeys: typeof leftKeys = right.map((meal, offset) => ["right", meal.name, offset])
+
+	let deleted: typeof leftKeys = []
+	let created: typeof leftKeys = []
+	let updated: typeof leftKeys = []
+
+	// if something is absent from the left (i.e. the original set), then it has been removed
+	for (const leftKey of leftKeys) {
+		if (!rightKeys.some((val) => {
+			return val[1] == leftKey[1] && val[2] == leftKey[2]
+		})) {
+			deleted.push(leftKey)
+		}
+	}
+
+	// if something is absent from the right (i.e. the incoming change), then it has been created
+	for (const rightKey of rightKeys) {
+		if (!leftKeys.some((val) => {
+			return val[1] == rightKey[1] && val[2] == rightKey[2]
+		})) {
+			created.push(rightKey)
+		} else {
+			// replace the contents of intersections with the incoming change
+			updated.push(rightKey)
+		}
+	}
+
+	return [deleted, created, updated]
 }

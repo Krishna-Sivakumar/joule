@@ -69,29 +69,20 @@ export function FlatMap<OriginalValue, TransformedValue>(
 	}
 }
 
-/*
-export function failable(x: number, y: string): number {
-	if (y == "failure") {
-		throw new Error("ugh...");
-	} else {
-		return x;
-	}
+export function Default<T>(maybe: Result<T>, _default: T) {
+	return Match(maybe, {
+		onOk: (val) => val,
+		onErr: (_) => _default
+	})
 }
 
-const result = WrapFault(failable, 1, "failure");
-
-Match(
-	result,
-	{
-		onOk(v) {
-			console.log(v);
-		},
-		onErr(e) {
-			console.log(e.stack, e.name);
-		},
-	},
-);
-*/
+export function Unwrap<T>(maybe: Result<T>): T {
+	if (maybe._tag == "ok") {
+		return maybe.value
+	} else {
+		throw new Error(`Result unwrap failed: ${maybe.error} is not ok`)
+	}
+}
 
 export const MapError = <V>(r: Result<V>, func: (err: Error) => Result<V>) =>
 	Match(r, {
@@ -100,10 +91,3 @@ export const MapError = <V>(r: Result<V>, func: (err: Error) => Result<V>) =>
 		},
 		onErr: func,
 	});
-
-/*
-MapError(result, (e) => {
-	console.log(e);
-	return err(e);
-});
-*/

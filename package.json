@@ -22,6 +22,7 @@
 		"esbuild-svelte": "^0.9.5",
 		"eslint": "^9.39.4",
 		"eslint-plugin-obsidianmd": "^0.3.0",
+		"fast-check": "^4.8.0",
 		"globals": "^17.6.0",
 		"jiti": "^2.6.1",
 		"obsidian": "latest",
@@ -34,10 +35,9 @@
 	},
 	"dependencies": {
 		"@codemirror/language": "^6.12.3",
-		"@nrsk/sigma": "^3.8.0",
 		"@types/jest": "^30.0.0",
 		"@types/markdown-it": "^14.1.2",
-		"i": "^0.3.7",
+		"dexie": "^4.4.4",
 		"markdown-it": "^14.2.0",
 		"npm": "^11.17.0",
 		"typescript-parsec": "^0.3.4"

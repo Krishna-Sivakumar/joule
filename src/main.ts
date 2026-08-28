@@ -8,6 +8,10 @@ import {
 } from "./settings.ts";
 import { JouleSuggest, PageSummaryStateField, PreviewJouleBlock } from "./preview.ts";
 import { parseJoule } from "./lib/parser.ts"
+import { DesktopDB } from "@libdb.ts";
+import { O } from "./lib";
+import { PGlite } from "@electric-sql/pglite";
+import { diffRecords } from "@libtypes.ts";
 
 type MealItem = {
 	quantity: number;
@@ -19,19 +23,6 @@ type MealRecord = {
 	name: string;
 	items: MealItem[];
 };
-
-// 2. Function to store meal records in a local SQLite file
-
-async function saveData(meal: MealRecord[], page: string) {
-	// prepare 1
-	// prepare 2
-	// mealid = prepare1.write(meal)
-	// meal.items.forEach(mealitem => prepare2.write(mealid, mealitem))
-}
-
-// 3. Function to query SQLite file for a certain meal name (tags can be either meal name or meal type or ingredient type)
-// 4. Function to generate summary statistics from SQLite file
-// 5. Svelte view to visualize statistics
 
 export default class Joule extends Plugin {
 	settings!: JouleSettings;
@@ -66,15 +57,40 @@ export default class Joule extends Plugin {
 		]);
 
 		this.app.workspace.onLayoutReady(() => {
+			const ddb = new DesktopDB();
+
 			this.registerEvent(this.app.vault.on("create", (file) => {
 			}, this));
 			this.registerEvent(this.app.vault.on("modify", async (file) => {
 				const concreteFile = this.app.vault.getFileByPath(file.path);
 				if (concreteFile) {
+
+					const old = await ddb.searchMealRecords({ kind: "document", arg: file.path })
+
 					const blocks = parseJoule(
 						await this.app.vault.cachedRead(concreteFile),
 						this.settings.units,
 					);
+
+					O.FlatMap(old, old => {
+						O.FlatMap(blocks, async change => {
+							const [deleted, created, updated] = diffRecords(old, change);
+							console.log("deleted", deleted)
+							console.log("created", created)
+							console.log("updated", updated)
+							for (const tuple of deleted) {
+								await ddb.deleteMealRecord(tuple[1], file.path, tuple[2])
+							}
+
+							// both of the following do the same thing
+							for (const tuple of created) {
+								await ddb.storeMealRecord(change[tuple[2]]!, file.path, tuple[2])
+							}
+							for (const tuple of updated) {
+								await ddb.storeMealRecord(change[tuple[2]]!, file.path, tuple[2])
+							}
+						})
+					})
 				}
 			}, this));
 			this.registerEvent(this.app.vault.on("delete", (file) => {

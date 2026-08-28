@@ -9,10 +9,12 @@ import {
 	type EditorSuggestContext,
 } from "obsidian";
 import {
-	type MealRecord,
 	parseJoule,
 	parseJouleBlock,
 } from "./lib/parser.ts";
+import {
+	type MealRecord
+} from "./lib/types.ts";
 import { mount } from "svelte";
 import { O } from "./lib/index.ts";
 import {
@@ -66,7 +68,7 @@ export class JouleSuggest extends EditorSuggest<Suggestions> {
 			.filter(
 				token =>
 				(token.map ?
-					cursor.line >= token.map[0] && cursor.line <= token.map[1]
+					cursor.line > token.map[0] && cursor.line < token.map[1]
 					: false
 				)
 			).at(0)
