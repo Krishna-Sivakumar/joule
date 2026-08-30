@@ -1,0 +1,3 @@
+[submodule "joule-lang"]
+	path = joule-lang
+	url = https://github.com/Krishna-Sivakumar/joule-lang
