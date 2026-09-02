@@ -5,5 +5,11 @@ export default defineConfig({
 	test: {
 		include: ["src/test/*.test.ts"],
 	},
-	plugins: [svelte()],
+	plugins: [svelte({
+		compilerOptions: {
+			experimental: {
+				async: true
+			}
+		}
+	})],
 })

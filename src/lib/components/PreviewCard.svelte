@@ -1,30 +1,89 @@
 <script lang="ts">
-	import { getContext } from 'svelte';
-	import {
-		type MealRecord,
-		evaluateMealRecord,
-		evaluateMealItem,
-		formulaString,
-	} from '../../lib/types.ts';
-	let tooltipState = $state({ visibility: 'hidden', item: -1, content: '' });
+import { getContext, onMount } from 'svelte';
+import {
+assembleUniversalKey,
+	MealItem,
+	MealRecord,
+} from '../../lib/types.ts';
+import { R, O } from "../../lib"
+import type { DesktopDB } from '@libdb.ts';
+let tooltipState = $state({ visibility: 'hidden', item: -1, content: '' });
 
-	const meal: MealRecord = getContext('meal');
+/**
+* NOTE to self
+* PLEASE PLEASE PLEEEEEEEEEEEEeASE CLEAN THIS UP T_T
+* this looks like horrible garbage
+*
+* all this bullshit because of no top level awaits...
+*/
 
-	function currentHoveredTooltip(item: number, content: string) {
-		return function () {
-			tooltipState.item = item;
-			tooltipState.visibility = 'visible';
-			tooltipState.content = content;
-		};
+const meal: MealRecord = getContext('meal');
+const ddb = getContext("ddb") as DesktopDB;
+let context: Record<string, MealRecord> = $state({})
+
+let total: O.Option<number> = $state(O.none());
+let evaledItems: Array<R.Result<{quantity: number, itemTotal: number, item: MealItem, formulaString: string}>> = $state([])
+
+onMount(async () => {
+	context = R.UnwrapDefault(await ddb.getDependentMeals(
+		meal
+			.getDependents()
+			.flatMap(
+				ref =>
+				assembleUniversalKey(ref.mealName, ref.document, ref.offset || 0)
+			)
+	), {})
+
+	evaledItems = meal
+		.items
+		.map(item => {
+			return R.MapError(R.Bind(
+				item.evaluate(context),
+				itemTotal => R.Bind(
+					item.evaluateQuantity(),
+					quantity => R.Bind(
+						item.evaluatedFormulaString(context),
+						formulaString => R.ok({
+							quantity,
+							itemTotal,
+							item,
+							formulaString
+						})
+					)
+				)
+			), err => new Error(`Could not calculate ${item.name.data!}: ${err}`))
+		})
+
+	total = O.some(evaledItems.map(item => R.UnwrapDefault(R.FlatMap(item, item => item.itemTotal), 0)).reduce((p, c) => p + c))
+})
+
+function currentHoveredTooltip(item: number, content: string) {
+	return function () {
+		tooltipState.item = item;
+		tooltipState.visibility = 'visible';
+		tooltipState.content = content;
+	};
+}
+
+function cancelHoveredTooltip() {
+	return function () {
+		tooltipState.item = -1;
+		tooltipState.visibility = 'hidden';
+		tooltipState.content = '';
+	};
+}
+
+/**
+* Displays a number with either 1.xx precision, or as a plain integer without a decimal part if the mantissa is 0.
+*/
+function ToFixedOrSnip(n: number): string {
+	let display = n.toFixed(2)
+	if (display.slice( display.length - 3, display.length ) == ".00") {
+		return display.slice(0, display.length - 3)
+	} else {
+		return display;
 	}
-
-	function cancelHoveredTooltip() {
-		return function () {
-			tooltipState.item = -1;
-			tooltipState.visibility = 'hidden';
-			tooltipState.content = '';
-		};
-	}
+}
 </script>
 
 <div class="tooltip" role="tooltip" style:visibility={tooltipState.visibility}>
@@ -34,23 +93,27 @@
 <div class="joule-card">
 	<div class="joule-card-heading">
 		<span>{meal.name}</span>
-		<span>{Math.round(evaluateMealRecord(meal))} kcal</span>
+		<span>{O.UnwrapDefault(O.FlatMap(total, total => `${Math.round(total)} kcal`), "")}</span>
 	</div>
 
-	{#each meal.items as item, idx}
+	{#each evaledItems as item, idx}
 		<div class="joule-card-item">
-			<span>{item.name}</span>
-			<span>{item.quantity} {item.unit ? item.unit : 'cnt.'}</span>
-			<span>{Math.round(evaluateMealItem(item))} kcal</span>
+			{#if R.isOk(item)}
+			<span>{item.value.item.name.data!}</span>
+			<span>{ToFixedOrSnip(item.value.quantity)} {item.value.item.unit ? item.value.item.unit : 'cnt.'}</span>
+			<span>{Math.round(item.value.itemTotal)} kcal</span>
 			<span
 				class={tooltipState.item == idx ? 'tooltip-anchor' : ''}
 				onmouseenter={currentHoveredTooltip(
 					idx,
-					formulaString(item.formula, item.quantity),
+					item.value.formulaString
 				)}
 				onmouseleave={cancelHoveredTooltip()}
 				role="note">?</span
 			>
+			{:else}
+			<span>{item.error}</span>
+			{/if}
 		</div>
 	{/each}
 </div>

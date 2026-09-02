@@ -30,25 +30,11 @@ export class JouleSettingsTab extends PluginSettingTab {
 			target: unitSettingElement,
 			context: new Map().set("units", this.plugin.settings.units).set(
 				"updateFunc",
-				async (value: string[]) => {
-					this.plugin.settings.units = value;
+				async (potentialUnits: string[]) => {
+					this.plugin.settings.units = potentialUnits;
 					await this.plugin.saveSettings();
 				},
 			),
 		});
-
-		/*
-		new Setting(containerEl)
-			.setName("Units")
-			.setDesc("Manage the quantity units that Joule can use")
-			.addTextArea((text) =>
-				text
-					.setValue(this.plugin.settings.units)
-					.onChange(async (value) => {
-						this.plugin.settings.units = value;
-						await this.plugin.saveSettings();
-					})
-			);
-		*/
 	}
 }

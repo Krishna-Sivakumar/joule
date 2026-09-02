@@ -21,7 +21,7 @@ const context = await esbuild.context({
 	bundle: true,
 	plugins: [
 		esbuildSvelte({
-			compilerOptions: { css: "injected" },
+			compilerOptions: { css: "injected", experimental: { async: true } },
 			preprocess: sveltePreprocess()
 		}),
 	],

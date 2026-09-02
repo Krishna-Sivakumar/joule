@@ -3,6 +3,17 @@
 	and useful functions related to those types.
 */
 
+import type { JouleTree } from "@libbindings/JouleTree";
+import type { ParseNode } from "@libbindings/ParseNode";
+import { R } from "./"
+import { O } from "./"
+import type { DesktopDB } from "@libdb";
+
+export type Tag = {
+	key: string,
+	value: O.Option<String>
+}
+
 export type ReferenceField = {
 	document: string;
 	mealName: string;
@@ -12,31 +23,211 @@ export type ReferenceField = {
 
 export type ValueNode =
 	{
-		value: { value: number, kind: "number" } | { kind: "serving" } | ReferenceField;
+		value: { value: number, kind: "number" }
+		| { kind: "serving" }
+		| ReferenceField
+		| { kind: "parens", child: Node };
 		kind: "value"
 	};
 
 export type BinaryNode = {
-	left: BinaryNode | ValueNode;
-	right: BinaryNode | ValueNode;
+	children: (BinaryNode | ValueNode)[]
 	op: "+" | "-" | "*" | "/";
 	kind: "binary"
 };
 
 export type Node = BinaryNode | ValueNode;
 
-export type MealItem = {
-	quantity: number;
-	unit?: string;
-	name: string;
+export class MealItem {
+	quantity: Node;
+	unit: string;
+	name: ParseNode<string>;
 	formula: Node;
+
+	constructor(quantity: Node, unit: string, name: ParseNode<string>, formula: Node) {
+		this.quantity = quantity;
+		this.unit = unit;
+		this.name = name;
+		this.formula = formula;
+	}
+
+	/**
+	* Evaluates quantity and returns the resultant number
+	*/
+	evaluateQuantity(): R.Result<number> {
+		return evaluateQuantity(this.quantity)
+	}
+
+	/**
+	* Evaluates the meal item and returns a resultant number representing the calorie value
+	*/
+	evaluate(context: Record<string, MealRecord>): R.Result<number> {
+		return R.FlatMap(
+			evaluateQuantity(this.quantity),
+			quantity => evaluateFormula(this.formula, quantity, context)
+		)
+	}
+
+	private evaluatedFormulaStringInternal(node: Node, sVal: number, context: Record<string, MealRecord>) {
+		switch (node.kind) {
+			case "binary":
+				const children = node.children.map(child => evaluateFormula(child, sVal, context))
+				return children.join(` ${node.op} `)
+			case "value":
+				switch (node.value.kind) {
+					case "number":
+						return node.value.value.toString();
+					case "reference":
+						return `[${node.value.document}][${node.value.mealName}]` + (node.value.offset) ? `[${node.value.offset}]` : "";
+					case "parens":
+						return `(${formulaString(node.value.child, sVal, context)})`
+					case "serving":
+						return sVal.toFixed(2);
+				}
+		}
+	}
+
+	/**
+	* Returns a string of the formula with servings and other values substituted in
+	*/
+	evaluatedFormulaString(context: Record<string, MealRecord>): R.Result<string> {
+		return R.FlatMap(
+			evaluateQuantity(this.quantity),
+			quantity => this.evaluatedFormulaStringInternal(this.formula, quantity, context)
+		)
+	}
+
+	/**
+	* Returns a string of the formula as it is
+	*/
+	formulaString(node: Node): string {
+		switch (node.kind) {
+			case "binary":
+				return node.children.map(child => formulaToString(child)).join(` ${node.op} `)
+			case "value":
+				switch (node.value.kind) {
+					case "number":
+						return node.value.value.toString();
+					case "serving":
+						return "s"
+					case "parens":
+						return `(${formulaToString(node.value.child)})`
+					case "reference":
+						return `[${node.value.document}][${node.value.mealName}]` + (node.value.offset) ? `[${node.value.offset}]` : ""
+				}
+		}
+	}
+
+	getDependentsFromFormula(): ReferenceField[] {
+		return getDependentsFromFormula(this.formula)
+	}
 };
 
-export type MealRecord = {
+export class MealRecord {
 	name: string;
 	items: MealItem[];
-	depends_on?: { filepath: string, name: string, offset: number }[]
+	tags: Array<Tag>;
+	dependsOn: O.Option<Array<{ filepath: string, name: string, offset: number }>>;
+	parseTree: JouleTree;
+
+	constructor(name: string, items: MealItem[], parseTree: JouleTree, tags: Array<Tag>, depends_on?: { filepath: string, name: string, offset: number }[]) {
+		this.name = name;
+		this.items = items;
+		this.dependsOn = O.Optionalize(depends_on);
+		this.parseTree = parseTree;
+		this.tags = tags;
+		return this
+	}
+
+	/**
+	* Evaluates the meal record and returns a resultant number representing the calorie value
+	*/
+	evaluate(context: Record<string, MealRecord>): R.Result<number> {
+		return (this.items.map(item => item.evaluate(context))).reduce(
+			(totalResult, itemValueResult) => R.Bind(itemValueResult, itemValue => R.FlatMap(totalResult, total => total + itemValue)),
+			R.ok(0)
+		)
+	}
+
+
+
+
+	getDependents(): ReferenceField[] {
+		function getDeps(t: JouleTree): ReferenceField[] {
+			switch (t.type) {
+				case "reference":
+					return [{
+						"document": t.data.document,
+						"mealName": t.data.meal_name,
+						"offset": t.data.offset,
+						"kind": "reference"
+					} as ReferenceField]
+				case "/":
+				case "*":
+				case "+":
+				case "-":
+					return t.data.flatMap(getDeps)
+				case "parens":
+					return getDeps(t.data)
+				case "item":
+					return getDeps(t.data.formula)
+				case "meal":
+					return t.data.items.data.flatMap(parseNode => getDeps(parseNode.data))
+				default:
+					return []
+			}
+		}
+
+		return getDeps(this.parseTree)
+	}
 };
+
+function evaluateQuantity(node: Node): R.Result<number> {
+	switch (node.kind) {
+		case "binary":
+			const children = node.children.map(child => evaluateQuantity(child))
+			if (children.length == 0) {
+				return R.err(new Error(`operator ${node} has no children.`))
+			}
+			const [first, tail] = [children[0]!, children.slice(1)]
+			switch (node.op) {
+				case "/":
+					return tail.reduce((previous, current) => {
+						return R.Bind(previous, previousValue => {
+							return R.FlatMap(current, currentValue => previousValue / currentValue)
+						})
+					}, first)
+				case "*":
+					return tail.reduce((previous, current) => {
+						return R.Bind(previous, previousValue => {
+							return R.FlatMap(current, currentValue => previousValue * currentValue)
+						})
+					}, first)
+				case "-":
+					return tail.reduce((previous, current) => {
+						return R.Bind(previous, previousValue => {
+							return R.FlatMap(current, currentValue => previousValue - currentValue)
+						})
+					}, first)
+				case "+":
+					return tail.reduce((previous, current) => {
+						return R.Bind(previous, previousValue => {
+							return R.FlatMap(current, currentValue => previousValue + currentValue)
+						})
+					}, first)
+			}
+		case "value":
+			switch (node.value.kind) {
+				case "serving":
+				case "reference":
+					return R.err(new Error(`${JSON.stringify(node)} is not a number.`))
+				case "number":
+					return R.ok(node.value.value)
+				case "parens":
+					return evaluateQuantity(node.value.child)
+			}
+	}
+}
 
 /**
 * recursively evaluates a parsed formula.
@@ -44,22 +235,20 @@ export type MealRecord = {
 * node: The parsed node
 * sVal: The value of 's' within the formula
 */
-function evaluateFormula(node: Node, sVal: number): number {
+function evaluateFormula(node: Node, sVal: number, context: Record<string, MealRecord>): number {
 	switch (node.kind) {
 		case "binary":
+			const children = node.children.map(child => evaluateFormula(child, sVal, context))
+			const [first, tail] = [children[0]!, children.slice(1)]
 			switch (node.op) {
 				case "/":
-					return evaluateFormula(node.left, sVal) /
-						evaluateFormula(node.right, sVal);
+					return tail.reduce((previous, current) => (previous / current), first)
 				case "*":
-					return evaluateFormula(node.left, sVal) *
-						evaluateFormula(node.right, sVal);
+					return tail.reduce((previous, current) => (previous * current), first)
 				case "-":
-					return evaluateFormula(node.left, sVal) -
-						evaluateFormula(node.right, sVal);
+					return tail.reduce((previous, current) => (previous - current), first)
 				case "+":
-					return evaluateFormula(node.left, sVal) +
-						evaluateFormula(node.right, sVal);
+					return tail.reduce((previous, current) => (previous + current), first)
 			}
 		case "value":
 			switch (node.value.kind) {
@@ -67,42 +256,36 @@ function evaluateFormula(node: Node, sVal: number): number {
 					return sVal;
 				case "number":
 					return node.value.value
+				case "parens":
+					return evaluateFormula(node.value.child, sVal, context)
 				case "reference":
-					// TODO fetch data here
-					return 1
+					return R.UnwrapDefault(R.Bind(O.Resultize(O.Optionalize(
+						context[assembleUniversalKey(node.value.mealName, node.value.document, node.value.offset || 0)]
+					)), meal => meal.evaluate(context)), 1)
 			}
 	}
 }
 
-export function formulaString(node: Node, sVal: number): string {
+function formulaString(node: Node, sVal: number, context: Record<string, MealRecord>): string {
 	switch (node.kind) {
 		case "binary":
-			return formulaString(node.left, sVal) + ` ${node.op} ` +
-				formulaString(node.right, sVal);
+			const children = node.children.map(child => evaluateFormula(child, sVal, context))
+			return children.join(` ${node.op} `)
 		case "value":
 			switch (node.value.kind) {
 				case "number":
 					return node.value.value.toString();
 				case "reference":
 					return `[${node.value.document}][${node.value.mealName}]` + (node.value.offset) ? `[${node.value.offset}]` : "";
+				case "parens":
+					return `(${formulaString(node.value.child, sVal, context)})`
 				case "serving":
 					return sVal.toFixed(2);
 			}
 	}
 }
 
-export function evaluateMealItem(item: MealItem): number {
-	return evaluateFormula(item.formula, item.quantity);
-}
-
-export function evaluateMealRecord(meal: MealRecord): number {
-	return meal.items.map((item) => evaluateMealItem(item)).reduce(
-		(prev, current) => prev + current,
-		0,
-	);
-}
-
-export function getDependentsFromFormula(formulaNode: Node): ReferenceField[] {
+function getDependentsFromFormula(formulaNode: Node): ReferenceField[] {
 	switch (formulaNode.kind) {
 		case "value":
 			if (formulaNode.value.kind == "reference") {
@@ -111,23 +294,22 @@ export function getDependentsFromFormula(formulaNode: Node): ReferenceField[] {
 				return []
 			}
 		case "binary":
-			return [
-				...getDependentsFromFormula(formulaNode.left),
-				...getDependentsFromFormula(formulaNode.right)
-			]
+			return formulaNode.children.flatMap(child => getDependentsFromFormula(child))
 	}
 }
 
 export function formulaToString(formulaNode: Node): string {
 	switch (formulaNode.kind) {
 		case "binary":
-			return `${formulaToString(formulaNode.left)} ${formulaNode.op} ${formulaToString(formulaNode.right)}`
+			return formulaNode.children.map(child => formulaToString(child)).join(` ${formulaNode.op} `)
 		case "value":
 			switch (formulaNode.value.kind) {
 				case "number":
 					return formulaNode.value.value.toString();
 				case "serving":
 					return "s"
+				case "parens":
+					return `(${formulaToString(formulaNode.value.child)})`
 				case "reference":
 					return `[${formulaNode.value.document}][${formulaNode.value.mealName}]` + (formulaNode.value.offset) ? `[${formulaNode.value.offset}]` : ""
 			}

@@ -10,13 +10,12 @@ import {
 } from "obsidian";
 import {
 	parseJoule,
-	parseJouleBlock,
 } from "./lib/parser.ts";
 import {
 	type MealRecord
 } from "./lib/types.ts";
 import { mount } from "svelte";
-import { O } from "./lib/index.ts";
+import { R } from "./lib/index.ts";
 import {
 	Decoration,
 	type DecorationSet,
@@ -26,20 +25,21 @@ import {
 import { RangeSetBuilder, StateField } from "@codemirror/state";
 import { PageSummary, PreviewCard } from "./lib/index.ts";
 import MarkdownIt from "markdown-it";
+import { DesktopDB } from "@libdb.ts";
 
-export function PreviewJouleBlock(units: string[]) {
+export function PreviewJouleBlock(units: string[], parser: (input: string, units: Array<string>) => R.Result<MealRecord>, ddb: DesktopDB) {
 	return async (
 		source: string,
 		el: HTMLElement,
 		_ctx: MarkdownPostProcessorContext,
 	): Promise<void> => {
-		const meal = parseJouleBlock(units, source);
+		const meal = parser(source, units);
 
-		O.Match(meal, {
+		R.Match(meal, {
 			onOk: (meal) => {
 				mount(PreviewCard, {
 					target: el,
-					context: new Map().set("meal", meal),
+					context: new Map().set("meal", meal).set("ddb", ddb),
 				});
 			},
 			onErr: (err) => {
@@ -74,10 +74,6 @@ export class JouleSuggest extends EditorSuggest<Suggestions> {
 			).at(0)
 
 		if (tokenOfConcern && tokenOfConcern.tag == "code" && tokenOfConcern.info == "joule") {
-			/*
-			NOTE TO SELF
-			
-			*/
 			return {
 				start: cursor,
 				end: cursor,
@@ -89,7 +85,7 @@ export class JouleSuggest extends EditorSuggest<Suggestions> {
 
 	}
 
-	getSuggestions(context: EditorSuggestContext): Suggestions[] | Promise<Suggestions[]> {
+	getSuggestions(_context: EditorSuggestContext): Suggestions[] | Promise<Suggestions[]> {
 		return [{
 			id: "get-item",
 			name: "Get Item",
@@ -124,21 +120,23 @@ export class JouleSuggest extends EditorSuggest<Suggestions> {
 
 class PageSummaryWidget extends WidgetType {
 	records: MealRecord[];
-	constructor(records: MealRecord[]) {
+	ddb: DesktopDB
+	constructor(records: MealRecord[], ddb: DesktopDB) {
 		super();
 		this.records = records;
+		this.ddb = ddb;
 	}
 	toDOM(_view: EditorView): HTMLElement {
 		const container = createEl("div");
 		mount(PageSummary, {
 			target: container,
-			context: new Map().set("meals", this.records),
+			context: new Map().set("meals", this.records).set("ddb", this.ddb),
 		});
 		return container;
 	}
 }
 
-export const PageSummaryStateField = (units: string[]) =>
+export const PageSummaryStateField = (units: string[], parser: (input: string, units: Array<string>) => R.Result<MealRecord>, ddb: DesktopDB) =>
 	StateField.define<DecorationSet>({
 		create: (_) => {
 			return Decoration.none;
@@ -161,11 +159,11 @@ export const PageSummaryStateField = (units: string[]) =>
 		There is also the problem that I have to do bookkeeping on my side to make sure that
 		I'm not grouping two overlapping markdown blocks into one entry.
 		*/
-			return O.Match(
-				O.FlatMap(
-					parseJoule(tx.state.doc.toString(), units),
+			return R.Match(
+				R.FlatMap(
+					parseJoule(tx.state.doc.toString(), units, parser),
 					(blocks) => {
-						const widget = new PageSummaryWidget(blocks);
+						const widget = new PageSummaryWidget(blocks, ddb);
 						const b = new RangeSetBuilder<Decoration>();
 						b.add(
 							tx.state.doc.length,
