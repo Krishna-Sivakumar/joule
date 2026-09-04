@@ -7,15 +7,18 @@ import {
 	type EditorPosition,
 	type EditorSuggestTriggerInfo,
 	type EditorSuggestContext,
+	SuggestModal,
+	MarkdownView,
 } from "obsidian";
 import {
 	parseJoule,
 } from "./lib/parser.ts";
 import {
+	assembleUniversalKey,
 	type MealRecord
 } from "./lib/types.ts";
 import { mount } from "svelte";
-import { R } from "./lib/index.ts";
+import { R, O } from "./lib/index.ts";
 import {
 	Decoration,
 	type DecorationSet,
@@ -26,6 +29,7 @@ import { RangeSetBuilder, StateField } from "@codemirror/state";
 import { PageSummary, PreviewCard } from "./lib/index.ts";
 import MarkdownIt from "markdown-it";
 import { DesktopDB } from "@libdb.ts";
+import { JouleTreeToString } from "@libresolver.ts";
 
 export function PreviewJouleBlock(units: string[], parser: (input: string, units: Array<string>) => R.Result<MealRecord>, ddb: DesktopDB) {
 	return async (
@@ -57,13 +61,72 @@ type Suggestions = {
 	action: () => void
 }
 
-export class JouleSuggest extends EditorSuggest<Suggestions> {
-	constructor(app: App) {
+export class MealFetchModal extends SuggestModal<MealRecord> {
+	ddb: DesktopDB
+
+	constructor(app: App, ddb: DesktopDB) {
 		super(app)
+		this.ddb = ddb;
 	}
 
-	onTrigger(cursor: EditorPosition, editor: Editor, file: TFile | null): EditorSuggestTriggerInfo | null {
-		let tokenOfConcern = MarkdownIt()
+	async getSuggestions(query: string): Promise<MealRecord[]> {
+		console.log(await this.ddb.searchMealRecords({ arg: query, kind: "name" }))
+		return R.UnwrapDefault(await this.ddb.searchMealRecords({ arg: query, kind: "name" }), [])
+	}
+
+	async renderSuggestion(meal: MealRecord, el: HTMLElement): Promise<void> {
+		const context = await this.ddb.getDependentMeals(meal.getDependents().map(ref => assembleUniversalKey(ref.mealName, ref.document, ref.offset || 0)))
+
+		R.FlatMap(context, context => {
+			R.Bind(meal.evaluate(context), totalCalories => {
+				el.createEl("div", { text: `${meal.name}: ${Math.round(totalCalories)} kcal` });
+
+				// el.createEl("div", { text: `${item.quantity} ${item.unit} ${item.name.data}: ${Math.round(itemCalories)} kcal`, attr: { style: "font-size: smaller" } });
+
+				meal.items.forEach(item => {
+					R.FlatMap(item.evaluate(context), itemCalories => R.Bind(
+						item.evaluateQuantity(),
+						quantity => R.ok(
+							el.createEl(
+								"div",
+								{
+									text: [quantity.toString(), item.unit, item.name.data, Math.round(itemCalories).toString(), "kcal"].filter(str => str.length > 0).join(" "),
+									attr: { style: "font-size: smaller" }
+								}
+							)
+						)
+					))
+				})
+
+				return R.ok({})
+			})
+		})
+	}
+
+	onChooseSuggestion(meal: MealRecord, _evt: MouseEvent | KeyboardEvent): void {
+		const wrapInCodeBlock = (content: string) => {
+			return `\`\`\`joule\n${content}\n\`\`\``
+		}
+
+		const view = this.app.workspace.getActiveViewOfType(MarkdownView)
+		if (view) {
+			const cursor = view.editor.getCursor();
+			view.editor.replaceRange(wrapInCodeBlock(JouleTreeToString(meal.parseTree)), cursor)
+		}
+	}
+}
+
+export class JouleBlockSuggest extends EditorSuggest<Suggestions> {
+	meal_parser: (input: string) => R.Result<MealRecord>;
+
+	constructor(app: App, meal_parser: (input: string) => R.Result<MealRecord>) {
+		super(app)
+		this.meal_parser = meal_parser;
+	}
+
+	getMealInFocus(editor: Editor): O.Option<MealRecord> {
+		const cursor = editor.getCursor()
+		const token = MarkdownIt()
 			.parse(editor.getValue(), {})
 			.filter(
 				token =>
@@ -73,19 +136,33 @@ export class JouleSuggest extends EditorSuggest<Suggestions> {
 				)
 			).at(0)
 
-		if (tokenOfConcern && tokenOfConcern.tag == "code" && tokenOfConcern.info == "joule") {
-			return {
-				start: cursor,
-				end: cursor,
-				query: ""
-			}
+		if (token && token.tag == "code" && token.info == "joule") {
+			return R.Optionalize(this.meal_parser(token.content))
 		} else {
-			return null;
+			return O.none()
 		}
-
 	}
 
-	getSuggestions(_context: EditorSuggestContext): Suggestions[] | Promise<Suggestions[]> {
+	onTrigger(cursor: EditorPosition, editor: Editor, _file: TFile | null): EditorSuggestTriggerInfo | null {
+		return O.Match(this.getMealInFocus(editor), {
+			onSome(_) {
+				return {
+					start: cursor,
+					end: cursor,
+					query: ""
+				}
+			},
+			onNone() {
+				return null
+			}
+		});
+	}
+
+	getSuggestions(context: EditorSuggestContext): Suggestions[] | Promise<Suggestions[]> {
+		return O.UnwrapDefault(O.FlatMap(this.getMealInFocus(context.editor), meal => {
+			return []
+		}), [])
+
 		return [{
 			id: "get-item",
 			name: "Get Item",

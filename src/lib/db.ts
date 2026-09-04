@@ -10,7 +10,7 @@
 	Use the Platform API to turn the browser-only feature flag on / off.
 */
 
-import { formulaToString, type MealRecord, type ReferenceField, type Node, assembleUniversalKey } from "./types";
+import { formulaToString, type MealRecord, type Node, assembleUniversalKey } from "./types";
 import { R, O } from "./";
 
 import Dexie, { type EntityTable } from "dexie";
@@ -40,14 +40,6 @@ interface DBDependence {
 	dependee_uk: string
 }
 
-type RecursiveFormulae = {
-	formulae: Node[],
-	dependent_formulae: Map<
-		string,              // hash of the form document-mealName-offset
-		RecursiveFormulae
-	>
-};
-
 export class DesktopDB {
 	db: Dexie & {
 		meal: EntityTable<DBMeal, "universal_key">,
@@ -63,8 +55,8 @@ export class DesktopDB {
 	) {
 		this.db = new Dexie("joule") as typeof this.db;
 		this.db.version(2).stores({
-			meal: "&universal_key,document",
-			item: "[universal_key+name],[name+universal_key+formula+unit+quantity]",
+			meal: "&universal_key,document,mealName",
+			item: "[universal_key+name],[name+universal_key+formula+unit+quantity],name",
 			dependence: "[dependant_uk+dependee_uk]",
 		})
 		this.db.open()
@@ -77,7 +69,7 @@ export class DesktopDB {
 	}
 
 	async storeMealRecord(meal: MealRecord, document: string, offset: number) {
-		const universal_key = `${document.split(".")[0]}-${meal.name}-${offset}`
+		const universal_key = assembleUniversalKey(meal.name, document, offset);
 
 		await this.db.transaction("rw", this.db.meal, this.db.item, this.db.dependence, async (t) => {
 			await t.meal.put({
@@ -152,7 +144,7 @@ export class DesktopDB {
 				}, [] as MealRecord[]))
 			case "name":
 				return R.ok((await Promise.all(
-					(await this.db.meal.where({ name: args.arg }).toArray())
+					(await this.db.meal.where("mealName").startsWithIgnoreCase(args.arg).toArray())
 						.map(dbmeal => dbmeal.universal_key)
 						.map(k => this.getMealRecordById(k))
 				)).reduce((array, current) => {

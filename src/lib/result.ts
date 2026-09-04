@@ -1,3 +1,5 @@
+import { O } from "../lib";
+
 // represents a successful operation
 export type Ok<V> = {
 	_tag: "ok";
@@ -105,3 +107,13 @@ export const MapError = <V>(r: Result<V>, func: (err: Error) => Error) =>
 		},
 	});
 
+export function Optionalize<V>(maybe: Result<V>): O.Option<V> {
+	return Match(maybe, {
+		onOk(value) {
+			return O.some(value)
+		},
+		onErr(_) {
+			return O.none()
+		}
+	})
+}

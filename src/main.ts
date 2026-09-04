@@ -6,7 +6,7 @@ import {
 	type JouleSettings,
 	JouleSettingsTab,
 } from "./settings.ts";
-import { JouleSuggest, PageSummaryStateField, PreviewJouleBlock } from "./preview.ts";
+import { JouleBlockSuggest, MealFetchModal, PageSummaryStateField, PreviewJouleBlock } from "./preview.ts";
 import { DesktopDB } from "@libdb.ts";
 import { type JouleTree } from "./lib/bindings/JouleTree.ts";
 import { diffRecords, MealRecord, type Node } from "@libtypes.ts";
@@ -60,7 +60,15 @@ export default class Joule extends Plugin {
 			},
 		})
 
-		this.registerEditorSuggest(new JouleSuggest(this.app));
+		this.addCommand({
+			id: "fetch-past-meal",
+			name: "Fetch Past Meal",
+			callback: () => {
+				new MealFetchModal(this.app, this.ddb).open()
+			}
+		})
+
+		this.registerEditorSuggest(new JouleBlockSuggest(this.app, this.meal_parser));
 
 		this.registerMarkdownCodeBlockProcessor(
 			"joule",
@@ -89,20 +97,21 @@ export default class Joule extends Plugin {
 
 					R.FlatMap(old, old => {
 						R.FlatMap(blocks, async (changes) => {
-							const [deleted, created, updated] = diffRecords(old, changes);
+							const [deleted, created, updated] = diffRecords(old, changes, file.path);
 							// console.log("deleted", deleted)
 							// console.log("created", created)
 							// console.log("updated", updated)
+
 							for (const tuple of deleted) {
-								await this.ddb.deleteMealRecord(tuple[1], file.path, tuple[2])
+								await this.ddb.deleteMealRecord(tuple.meal.name, file.path, tuple.offset)
 							}
 
 							// both of the following do the same thing
 							for (const tuple of created) {
-								await this.ddb.storeMealRecord(changes[tuple[2]]!, file.path, tuple[2])
+								await this.ddb.storeMealRecord(tuple.meal, file.path, tuple.offset);
 							}
 							for (const tuple of updated) {
-								await this.ddb.storeMealRecord(changes[tuple[2]]!, file.path, tuple[2])
+								await this.ddb.storeMealRecord(tuple.meal, file.path, tuple.offset);
 							}
 						})
 					})

@@ -91,7 +91,7 @@ export function ResolveFormulaP(t: JouleTree): R.Result<Node> {
 	}
 }
 
-function ResolveItemP(t: JouleTree): R.Result<MealItem> {
+export function ResolveItemP(t: JouleTree): R.Result<MealItem> {
 	if (t.type == "item") {
 		const name = t.data.name;
 		const quantity = ResolveFormulaP(t.data.quantity);
@@ -151,4 +151,35 @@ export function ResolveMealP(t: JouleTree): R.Result<MealRecord> {
 	} else {
 		return R.err(new Error(`${t} is not an item node`));
 	}
+}
+
+
+export function JouleTreeToString(t: JouleTree): string {
+	switch (t.type) {
+		case "integer":
+			return t.data.toString()
+		case "float":
+			return t.data.toString()
+		case "serving":
+			return "s"
+		case "reference":
+			return `[${t.data.document}][${t.data.meal_name}][${t.data.offset || 0}]`
+		case "tag":
+			return t.data.key + (t.data.value ? " : " + t.data.value : "")
+		case "parens":
+			return `(${JouleTreeToString(t.data)})`
+		case "/":
+			return t.data.map(child => JouleTreeToString(child)).join("/")
+		case "*":
+			return t.data.map(child => JouleTreeToString(child)).join("*")
+		case "-":
+			return t.data.map(child => JouleTreeToString(child)).join("-")
+		case "+":
+			return t.data.map(child => JouleTreeToString(child)).join("+")
+		case "item":
+			return `${JouleTreeToString(t.data.quantity)} ${t.data.unit} ${t.data.name.data} (${JouleTreeToString(t.data.formula)})`
+		case "meal":
+			return [t.data.name.data, ...t.data.items.data.map(item => JouleTreeToString(item.data))].join("\n")
+	}
+
 }

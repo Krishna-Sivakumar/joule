@@ -320,32 +320,66 @@ export function assembleUniversalKey(mealName: string, document: string, offset:
 	return `${document.split(".")[0]}-${mealName}-${offset}`
 }
 
-export function diffRecords(left: MealRecord[], right: MealRecord[]): [["left" | "right", string, number][], ["left" | "right", string, number][], ["left" | "right", string, number][]] {
-	const leftKeys: ["left" | "right", string, number][] = left.map((meal, offset) => ["left", meal.name, offset])
-	const rightKeys: typeof leftKeys = right.map((meal, offset) => ["right", meal.name, offset])
+function aggregatedOffsets(meals: MealRecord[]): Record<string, Array<MealRecord>> {
+	let table: Record<string, MealRecord[]> = {}
+	for (const meal of meals) {
+		table[meal.name] = [...table[meal.name] || [], meal]
+	}
+	return table
+}
 
-	let deleted: typeof leftKeys = []
-	let created: typeof leftKeys = []
-	let updated: typeof leftKeys = []
+/**
+* `diffRecords` compares MealRecords in `left` (old records) vs the ones in `right` (incoming records).
+* The comparison is done by matching computed universal keys.
+* 
+* Imagine a venn diagram with two circles intersecting;
+* The intersection of records are updated, the right is created and the left is deleted.
+*/
+export function diffRecords(left: MealRecord[], right: MealRecord[], path: string): [Array<{ meal: MealRecord, offset: number }>, Array<{ meal: MealRecord, offset: number }>, Array<{ meal: MealRecord, offset: number }>] {
+	let deleted: Array<{ meal: MealRecord, offset: number }> = []
+	let created: Array<{ meal: MealRecord, offset: number }> = []
+	let updated: Array<{ meal: MealRecord, offset: number }> = []
 
-	// if something is absent from the left (i.e. the original set), then it has been removed
-	for (const leftKey of leftKeys) {
-		if (!rightKeys.some((val) => {
-			return val[1] == leftKey[1] && val[2] == leftKey[2]
-		})) {
-			deleted.push(leftKey)
+	const leftAggregatedMeals = aggregatedOffsets(left);
+	const rightAggregatedMeals = aggregatedOffsets(right);
+
+	// the following two object are a hashmap of universal keys to a <MealRecord, offset> pair
+	const leftKeys = Object.values(leftAggregatedMeals)
+		.flatMap(meals => {
+			return meals.map((meal, offset) => [assembleUniversalKey(meal.name, path, offset), meal, offset] as [string, MealRecord, number])
+		})
+		.reduce((accumulator, [ukey, meal, offset]) => {
+			accumulator[ukey] = { meal, offset }
+			return accumulator
+		}, {} as Record<string, { meal: MealRecord, offset: number }>)
+
+
+	const rightKeys = Object.values(rightAggregatedMeals)
+		.flatMap(meals => {
+			return meals.map((meal, offset) => [assembleUniversalKey(meal.name, path, offset), meal, offset] as [string, MealRecord, number])
+		})
+		.reduce((accumulator, [ukey, meal, offset]) => {
+			accumulator[ukey] = { meal, offset }
+			return accumulator
+		}, {} as Record<string, { meal: MealRecord, offset: number }>)
+
+
+	// if there is a key in left ("old") that's not in right, that means it's been deleted
+	for (const leftKey of Object.keys(leftKeys)) {
+		if (!(leftKey in rightKeys)) {
+			deleted.push(leftKeys[leftKey]!)
 		}
 	}
 
-	// if something is absent from the right (i.e. the incoming change), then it has been created
-	for (const rightKey of rightKeys) {
-		if (!leftKeys.some((val) => {
-			return val[1] == rightKey[1] && val[2] == rightKey[2]
-		})) {
-			created.push(rightKey)
+	for (const rightKey of Object.keys(rightKeys)) {
+		if (rightKey in leftKeys) {
+			// if there is a key in right ("incoming") that's in left, it's assumed to have been updated (but not necessarily)
+			// TODO a deeper check can be done by match parse trees and checking if they have the same inorder traversal, but that might be too much computation
+			// TODO but is it too much computation compared to calling IndexedDB multiple times?
+			updated.push(rightKeys[rightKey]!)
 		} else {
-			// replace the contents of intersections with the incoming change
-			updated.push(rightKey)
+			// if there is a key in right ("incoming") that's not in left, that means it's been created
+			created.push(rightKeys[rightKey]!)
 		}
 	}
 
