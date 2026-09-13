@@ -20,3 +20,27 @@
 .joule-settings-contracted {
 	width: 60%;
 }
+
+.joule-search-header {
+	display: flex;
+	gap: 0.25rem;
+}
+
+.joule-search-shared {
+	color: white;
+	padding: 0 0.25rem;
+	border: 1px solid #474444;
+	background: #313030;
+	border-radius: 2px;
+	font-weight: bold;
+}
+
+.joule-search-lowlight {
+	color: gray;
+}
+
+.joule-search-item {
+	display: flex;
+	gap: 0.25rem;
+	font-size: smaller;
+}

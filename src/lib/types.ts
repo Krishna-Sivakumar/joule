@@ -149,9 +149,6 @@ export class MealRecord {
 		)
 	}
 
-
-
-
 	getDependents(): ReferenceField[] {
 		function getDeps(t: JouleTree): ReferenceField[] {
 			switch (t.type) {
@@ -320,7 +317,7 @@ export function assembleUniversalKey(mealName: string, document: string, offset:
 	return `${document.split(".")[0]}-${mealName}-${offset}`
 }
 
-function aggregatedOffsets(meals: MealRecord[]): Record<string, Array<MealRecord>> {
+export function aggregatedOffsets(meals: MealRecord[]): Record<string, Array<MealRecord>> {
 	let table: Record<string, MealRecord[]> = {}
 	for (const meal of meals) {
 		table[meal.name] = [...table[meal.name] || [], meal]

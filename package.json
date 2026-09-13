@@ -7,7 +7,7 @@
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"build-parser": "cd joule-lang && wasm-pack build --target web && cargo test export_bindings && cp pkg/* ../pkg && cp bindings/* ../src/lib/bindings/ && cd ..",
+		"build-parser": "mkdir pkg && cd joule-lang && wasm-pack build --target web && cargo test export_bindings && cp pkg/* ../pkg && cp bindings/* ../src/lib/bindings/ && cd ..",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"lint": "eslint .",
 		"test": "vitest",
@@ -38,6 +38,7 @@
 		"@codemirror/language": "^6.12.3",
 		"@types/markdown-it": "^14.1.2",
 		"dexie": "^4.4.4",
+		"fuse.js": "^7.6.0-beta.0",
 		"markdown-it": "^14.2.0",
 		"npm": "^11.17.0"
 	}

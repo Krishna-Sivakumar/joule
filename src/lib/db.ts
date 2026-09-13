@@ -10,19 +10,21 @@
 	Use the Platform API to turn the browser-only feature flag on / off.
 */
 
-import { formulaToString, type MealRecord, type Node, assembleUniversalKey } from "./types";
+import { formulaToString, type MealRecord, type Node, assembleUniversalKey, type Tag } from "./types";
 import { R, O } from "./";
 
 import Dexie, { type EntityTable } from "dexie";
 import type { JouleTree } from "@libbindings/JouleTree";
 import { ResolveMealP } from "@libresolver";
+import Fuse from "fuse.js";
 
 interface DBMeal {
 	document: string
 	mealName: string
 	offset: number
 	metadata: {
-		parseTree: JouleTree
+		parseTree: JouleTree,
+		tags: Tag[]
 	}
 	universal_key: string
 }
@@ -48,6 +50,7 @@ export class DesktopDB {
 	};
 	meal_parser: (input: string) => R.Result<MealRecord>;
 	formula_parser: (input: string) => R.Result<Node>;
+	fuzzy_search_instance!: Fuse<DBMeal>
 
 	constructor(
 		meal_parser: (input: string) => R.Result<MealRecord>,
@@ -62,6 +65,10 @@ export class DesktopDB {
 		this.db.open()
 		this.meal_parser = meal_parser;
 		this.formula_parser = formula_parser;
+
+		this.db.meal.toArray().then(dbMeals => {
+			this.fuzzy_search_instance = new Fuse(dbMeals, { keys: ["document", "mealName"] })
+		})
 	}
 
 	async deleteMealRecord(mealName: string, document: string, offset: number) {
@@ -78,7 +85,8 @@ export class DesktopDB {
 				offset,
 				universal_key,
 				metadata: {
-					parseTree: meal.parseTree
+					parseTree: meal.parseTree,
+					tags: meal.tags
 				}
 			})
 
@@ -129,33 +137,25 @@ export class DesktopDB {
 		)
 	}
 
-	async searchMealRecords(args: { arg: string, kind: "name" } | { arg: string, kind: "document" }): Promise<R.Result<MealRecord[]>> {
-		switch (args.kind) {
-			case "document":
-				return R.ok((await Promise.all(
-					(await this.db.meal.where({ document: args.arg }).toArray())
-						.map(dbmeal => dbmeal.universal_key)
-						.map(k => this.getMealRecordById(k))
-				)).reduce((array, current) => {
-					if (R.isOk(current)) {
-						array.push(current.value)
-					}
-					return array
-				}, [] as MealRecord[]))
-			case "name":
-				return R.ok((await Promise.all(
-					(await this.db.meal.where("mealName").startsWithIgnoreCase(args.arg).toArray())
-						.map(dbmeal => dbmeal.universal_key)
-						.map(k => this.getMealRecordById(k))
-				)).reduce((array, current) => {
-					if (R.isOk(current)) {
-						array.push(current.value)
-					}
-					return array
-				}, [] as MealRecord[]))
-			default:
-				return R.err(new Error("unimplemented"))
-		}
+	searchMealRecords(...args: Array<{ arg: string, kind: "mealName" | "document", exact?: boolean }>): MealRecord[] {
+		const clauses: Array<Fuse.Expression> = args.map(argument => {
+			if (argument.exact && argument.exact) {
+				return { [argument.kind]: { $eq: argument.arg } }
+			} else {
+				return { [argument.kind]: argument.arg }
+			}
+		})
+
+		return this
+			.fuzzy_search_instance
+			.search({ $and: clauses })
+			.map(dbmeal => ResolveMealP(dbmeal.item.metadata.parseTree))
+			.reduce((array, current) => {
+				if (R.isOk(current)) {
+					array.push(current.value)
+				}
+				return array
+			}, [] as MealRecord[])
 	}
 
 	async getDependentMeals(keys: string[]): Promise<R.Result<Record<string, MealRecord>>> {
@@ -196,86 +196,6 @@ export class DesktopDB {
 
 		return table
 	}
-
-	// async getAllDependentFormulae(universal_key: string): Promise<R.Result<RecursiveFormulae>> {
-	// 	/**
-	// 	* collect meals and related formulae into a table
-	// 	* before building out the recursive structure
-	// 	*/
-
-	// 	let table: Map<string, Node[]> = new Map();
-
-	// 	const hashReferenceField = (r: ReferenceField) => `${r.document}-${r.mealName}-${r.offset}`
-
-	// 	let queue: string[] = [universal_key]
-	// 	let visited: Set<string> = new Set()
-	// 	do {
-	// 		// fetch the current key
-	// 		const head = queue[0]!;
-	// 		queue = queue.slice(1);
-	// 		if (visited.has(head)) {
-	// 			continue
-	// 		}
-	// 		visited.add(head)
-
-	// 		let meal = await this.db.meal.get(universal_key)
-	// 		if (!meal) {
-	// 			return R.err(new Error(`Meal not found: ${universal_key}`))
-	// 		}
-	// 		let reference: ReferenceField = { document: meal.document, offset: meal.offset, mealName: meal.mealName, kind: "reference" }
-
-	// 		// fetch items related to the meal
-	// 		for (const item of await this.db.item.where({ universal_key: head }).toArray()) {
-	// 			// parse the formula of each item
-	// 			const nodeResult = parseFormulaString(item.formula)
-	// 			if (R.isOk(nodeResult)) {
-	// 				// if valid, add it to the meal's parsed formulae
-	// 				const node = nodeResult.value
-	// 				if (table.has(hashReferenceField(reference))) {
-	// 					table.get(hashReferenceField(reference))!.push(node)
-	// 				} else {
-	// 					table.set(hashReferenceField(reference), [node])
-	// 				}
-	// 			} else {
-	// 				return R.err(new Error(`Malformed formula: ${item.formula} of meal ${reference}`))
-	// 			}
-	// 		}
-
-	// 		for (const node of table.get(head) || []) {
-	// 			let refs = getDependentsFromFormula(node)
-	// 			for (const ref of refs) {
-	// 				const potentialMeal = await this.db.meal.where({ filepath: ref.document, name: ref.mealName, offset: ref.offset }).first();
-	// 				if (!potentialMeal) {
-	// 					return R.err(new Error(`Could not find meal ${ref}`))
-	// 				}
-	// 				if (visited.has(potentialMeal.universal_key)) {
-	// 					continue
-	// 				} else {
-	// 					queue.push(potentialMeal.universal_key)
-	// 				}
-	// 			}
-	// 		}
-	// 	} while (queue.length > 0)
-
-	// 	function assembleRecursive(table: Map<string, Node[]>, current: string): RecursiveFormulae {
-	// 		const rf: RecursiveFormulae = {
-	// 			formulae: table.get(current)!,
-	// 			dependent_formulae: new Map()
-	// 		};
-
-	// 		rf.dependent_formulae = (table.get(current) || []).flatMap(node => getDependentsFromFormula(node).map(dependeeReference => {
-	// 			const referenceHash = hashReferenceField(dependeeReference)
-	// 			return [referenceHash, assembleRecursive(table, referenceHash)] as [string, RecursiveFormulae]
-	// 		})).reduce((map, current) => {
-	// 			map.set(current[0], current[1])
-	// 			return map
-	// 		}, new Map() as Map<string, RecursiveFormulae>)
-
-	// 		return rf
-	// 	}
-
-	// 	return R.ok(assembleRecursive(table, universal_key))
-	// }
 }
 
 

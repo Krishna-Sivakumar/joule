@@ -1,6 +1,6 @@
 // ---
 
-import { Plugin } from "obsidian";
+import { App, Notice, Plugin } from "obsidian";
 import {
 	DEFAULT_SETTINGS,
 	type JouleSettings,
@@ -9,8 +9,8 @@ import {
 import { JouleBlockSuggest, MealFetchModal, PageSummaryStateField, PreviewJouleBlock } from "./preview.ts";
 import { DesktopDB } from "@libdb.ts";
 import { type JouleTree } from "./lib/bindings/JouleTree.ts";
-import { diffRecords, MealRecord, type Node } from "@libtypes.ts";
-import { R } from "./lib";
+import { aggregatedOffsets, diffRecords, MealRecord, type Node } from "@libtypes.ts";
+import { O, R } from "./lib";
 import { ResolveFormulaP, ResolveMealP } from "@libresolver.ts";
 import { parseJoule } from "@libparser.ts";
 
@@ -60,6 +60,45 @@ export default class Joule extends Plugin {
 			},
 		})
 
+		const plugin = this;
+
+		this.addCommand({
+			id: "joule-reindex",
+			name: "Reindex Joule",
+			async callback() {
+				const start = performance.now()
+				await Promise.all(plugin.app.vault.getMarkdownFiles().map(async file => {
+					const doc = await plugin.app.vault.cachedRead(file)
+					const metadata = plugin.app.metadataCache.getFileCache(file)
+					const date = R.Optionalize(R.WrapFault(() => new Date(metadata!.frontmatter!["date"]).toDateString()))
+
+					const res = R.FlatMap(parseJoule(doc, plugin.settings.units, plugin.meal_parser), async blocks => {
+						const offsets = aggregatedOffsets(blocks)
+						await Promise.all(Object.values(offsets).map(async meals => {
+							await Promise.all(meals.map(async (meal, offset) => {
+								if (O.isSome(date)) {
+									meal.tags.push({ key: "date", value: date });
+								}
+								await plugin.ddb.storeMealRecord(meal, file.path, offset)
+							}))
+						}))
+					});
+
+					if (R.isOk(res)) {
+						await res.value;
+						console.log(`done indexing ${file.path}`)
+					} else {
+						console.log(`${file.path}: reindex error:`, res.error)
+					}
+
+				}))
+
+				const time_taken = performance.now() - start;
+
+				new Notice(`Joule: Done Reindexing. Took ${time_taken}ms`)
+			},
+		})
+
 		this.addCommand({
 			id: "fetch-past-meal",
 			name: "Fetch Past Meal",
@@ -85,9 +124,9 @@ export default class Joule extends Plugin {
 
 			this.registerEvent(this.app.vault.on("modify", async (file) => {
 				const concreteFile = this.app.vault.getFileByPath(file.path);
-
 				if (concreteFile) {
-					const old = await this.ddb.searchMealRecords({ kind: "document", arg: file.path })
+					const metadata = this.app.metadataCache.getFileCache(concreteFile)
+					const old = this.ddb.searchMealRecords({ kind: "document", arg: file.path })
 
 					const blocks = parseJoule(
 						await this.app.vault.cachedRead(concreteFile),
@@ -95,26 +134,53 @@ export default class Joule extends Plugin {
 						this.meal_parser
 					);
 
-					R.FlatMap(old, old => {
-						R.FlatMap(blocks, async (changes) => {
-							const [deleted, created, updated] = diffRecords(old, changes, file.path);
-							// console.log("deleted", deleted)
-							// console.log("created", created)
-							// console.log("updated", updated)
+					const date = R.WrapFault(() => new Date(metadata!.frontmatter!["date"]))
 
-							for (const tuple of deleted) {
-								await this.ddb.deleteMealRecord(tuple.meal.name, file.path, tuple.offset)
-							}
-
-							// both of the following do the same thing
-							for (const tuple of created) {
-								await this.ddb.storeMealRecord(tuple.meal, file.path, tuple.offset);
-							}
-							for (const tuple of updated) {
-								await this.ddb.storeMealRecord(tuple.meal, file.path, tuple.offset);
-							}
+					R.FlatMap(date, date => R.FlatMap(blocks, async (changes) => {
+						changes = changes.map(change => {
+							change.tags.push({ key: "date", value: O.some(date.toString()) })
+							return change
 						})
+
+						const [deleted, created, updated] = diffRecords(old, changes, file.path);
+						// console.log("deleted", deleted)
+						// console.log("created", created)
+						// console.log("updated", updated)
+
+						for (const tuple of deleted) {
+							await this.ddb.deleteMealRecord(tuple.meal.name, file.path, tuple.offset)
+						}
+
+						// both of the following do the same thing
+						for (const tuple of created) {
+							await this.ddb.storeMealRecord(tuple.meal, file.path, tuple.offset);
+						}
+						for (const tuple of updated) {
+							await this.ddb.storeMealRecord(tuple.meal, file.path, tuple.offset);
+						}
+
+						return R.ok({})
+					}))
+
+					R.FlatMap(blocks, async (changes) => {
+						const [deleted, created, updated] = diffRecords(old, changes, file.path);
+						// console.log("deleted", deleted)
+						// console.log("created", created)
+						// console.log("updated", updated)
+
+						for (const tuple of deleted) {
+							await this.ddb.deleteMealRecord(tuple.meal.name, file.path, tuple.offset)
+						}
+
+						// both of the following do the same thing
+						for (const tuple of created) {
+							await this.ddb.storeMealRecord(tuple.meal, file.path, tuple.offset);
+						}
+						for (const tuple of updated) {
+							await this.ddb.storeMealRecord(tuple.meal, file.path, tuple.offset);
+						}
 					})
+
 				}
 			}, this));
 			this.registerEvent(this.app.vault.on("delete", (_file) => {

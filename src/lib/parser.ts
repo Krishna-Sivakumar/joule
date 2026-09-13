@@ -18,7 +18,7 @@ export function parseJoule(
 	const tokens = md.parse(content, {});
 	const codeBlocks = tokens.filter((token) => {
 		return (token.type == "fence" && token.tag == "code" &&
-			token.info == "joule");
+			(token.info == "joule" || token.info == "calorie"));
 	}).map((token) => token.content.trim());
 
 	return codeBlocks

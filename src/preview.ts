@@ -70,8 +70,7 @@ export class MealFetchModal extends SuggestModal<MealRecord> {
 	}
 
 	async getSuggestions(query: string): Promise<MealRecord[]> {
-		console.log(await this.ddb.searchMealRecords({ arg: query, kind: "name" }))
-		return R.UnwrapDefault(await this.ddb.searchMealRecords({ arg: query, kind: "name" }), [])
+		return this.ddb.searchMealRecords({ arg: query, kind: "mealName" })
 	}
 
 	async renderSuggestion(meal: MealRecord, el: HTMLElement): Promise<void> {
@@ -79,22 +78,28 @@ export class MealFetchModal extends SuggestModal<MealRecord> {
 
 		R.FlatMap(context, context => {
 			R.Bind(meal.evaluate(context), totalCalories => {
-				el.createEl("div", { text: `${meal.name}: ${Math.round(totalCalories)} kcal` });
+				const header = el.createDiv({ cls: "joule-search-header" })
+				header.createEl("span", { text: `${meal.name}` })
+				header.createEl("span", { text: `${Math.round(totalCalories)}`, cls: "joule-search-lowlight" })
+				header.createEl("span", { text: `kcal`, cls: "joule-search-lowlight" })
 
-				// el.createEl("div", { text: `${item.quantity} ${item.unit} ${item.name.data}: ${Math.round(itemCalories)} kcal`, attr: { style: "font-size: smaller" } });
+				if (meal.tags.find(tag => tag.key.contains("shared"))) {
+					header.createEl("span", { text: "Shared", cls: "joule-search-shared" })
+				}
 
 				meal.items.forEach(item => {
 					R.FlatMap(item.evaluate(context), itemCalories => R.Bind(
 						item.evaluateQuantity(),
-						quantity => R.ok(
-							el.createEl(
-								"div",
-								{
-									text: [quantity.toString(), item.unit, item.name.data, Math.round(itemCalories).toString(), "kcal"].filter(str => str.length > 0).join(" "),
-									attr: { style: "font-size: smaller" }
-								}
-							)
-						)
+						quantity => {
+							const searchItem = el.createDiv({ cls: "joule-search-item" });
+							searchItem.createEl("span", { text: quantity.toString() })
+							searchItem.createEl("span", { text: item.unit, cls: "joule-search-lowlight" })
+							searchItem.createEl("span", { text: item.name.data })
+							searchItem.createEl("span", { text: Math.round(itemCalories).toString(), cls: "joule-search-lowlight" })
+							searchItem.createEl("span", { text: "kcal", cls: "joule-search-lowlight" })
+
+							return R.ok({})
+						}
 					))
 				})
 
@@ -179,7 +184,6 @@ export class JouleBlockSuggest extends EditorSuggest<Suggestions> {
 	}
 
 	renderSuggestion(value: Suggestions, el: HTMLElement): void {
-		// el.addClass("suggestion-container")
 		el
 			.createEl("div", { cls: "suggestion-item" })
 			.createEl("div", { cls: "suggestion-content" })
@@ -213,54 +217,62 @@ class PageSummaryWidget extends WidgetType {
 	}
 }
 
-export const PageSummaryStateField = (units: string[], parser: (input: string, units: Array<string>) => R.Result<MealRecord>, ddb: DesktopDB) =>
-	StateField.define<DecorationSet>({
-		create: (_) => {
-			return Decoration.none;
-		},
-		update: (_, tx) => {
+export const PageSummaryStateField = (units: string[], parser: (input: string, units: Array<string>) => R.Result<MealRecord>, ddb: DesktopDB) => {
 
-			tx.state
-
-			/*
-		NOTE TO SELF
-		Right now, I parse the entire page whenever I detect a change here.
-		This seems to be absolutely fine performance-wise, right now.
-
-		If this ever becomes an issue, a good idea is to detect if a particular block has changed, and then reparse it.
-		This would cut down on processing way more than trying to build an incremental parser.
-
-		Maybe this can be rewritten into a View plugin.
-		But the problem there is the edge case that a markdown block takes up the entire screen.
-
-		There is also the problem that I have to do bookkeeping on my side to make sure that
-		I'm not grouping two overlapping markdown blocks into one entry.
-		*/
-			return R.Match(
-				R.FlatMap(
-					parseJoule(tx.state.doc.toString(), units, parser),
-					(blocks) => {
-						const widget = new PageSummaryWidget(blocks, ddb);
-						const b = new RangeSetBuilder<Decoration>();
-						b.add(
-							tx.state.doc.length,
-							tx.state.doc.length,
-							Decoration.widget({
-								widget: widget,
-								side: 1,
-								block: true,
-							}),
-						);
-						return b.finish();
-					},
-				),
-				{
-					onOk: (decorations) => decorations,
-					onErr: (_) => Decoration.none,
+	function buildSummary(document: string) {
+		return R.Match(
+			R.FlatMap(
+				parseJoule(document, units, parser),
+				(blocks) => {
+					const widget = new PageSummaryWidget(blocks, ddb);
+					const b = new RangeSetBuilder<Decoration>();
+					b.add(
+						document.length,
+						document.length,
+						Decoration.widget({
+							widget: widget,
+							side: 1,
+							block: true,
+						}),
+					);
+					return b.finish();
 				},
-			);
+			),
+			{
+				onOk: (decorations) => decorations,
+				onErr: (_) => Decoration.none,
+			},
+		);
+	}
+
+	return StateField.define<DecorationSet>({
+		create: (editorState) => {
+			return buildSummary(editorState.doc.toString())
+		},
+		update: (existingDecorations, tx) => {
+			if (tx.docChanged) {
+				/*
+				NOTE TO SELF
+				Right now, I parse the entire page whenever I detect a change here.
+				This seems to be absolutely fine performance-wise, right now.
+
+				If this ever becomes an issue, a good idea is to detect if a particular block has changed, and then reparse it.
+				This would cut down on processing way more than trying to build an incremental parser.
+
+				Maybe this can be rewritten into a View plugin.
+				But the problem there is the edge case that a markdown block takes up the entire screen.
+
+				There is also the problem that I have to do bookkeeping on my side to make sure that
+				I'm not grouping two overlapping markdown blocks into one entry.
+				*/
+				return buildSummary(tx.state.doc.toString())
+			} else {
+				// if the document hasn't changed, don't recompile joule blocks
+				return existingDecorations
+			}
 		},
 		provide: (field) => {
 			return EditorView.decorations.from(field);
 		},
-	});
+	})
+};
