@@ -8,6 +8,12 @@
 # npm
 node_modules
 
+# ignore wasm artefacts
+pkg
+
+# ignore release artefact
+*.zip
+
 # Don't include the compiled main.js file in the repo.
 # They should be uploaded to GitHub releases instead.
 main.js
