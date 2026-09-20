@@ -25,8 +25,8 @@ jobs:
             - name: Build plugin
               run: |
                   npm ci
-                  npm run build
                   npm run build-parser
+                  npm run build
                   npm run publish
 
             - name: Check for optional styles
