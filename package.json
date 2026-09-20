@@ -8,6 +8,7 @@
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"build-parser": "mkdir pkg && cd joule-lang && wasm-pack build --target web && cargo test export_bindings && cp pkg/* ../pkg && cp bindings/* ../src/lib/bindings/ && cd ..",
+		"publish": "zip release main.js manifest.json styles.css pkg/*",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"lint": "eslint .",
 		"test": "vitest",
